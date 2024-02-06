@@ -49,8 +49,8 @@ jobs:
     steps:
     - name: Install dependencies
       run: |-
-        apt update
-        apt install -y git openssh-client cmake build-essential \
+        sudo apt update
+        sudo apt install -y git openssh-client cmake build-essential \
             libreadline-dev libicu-dev zip python3
     - uses: actions/checkout@v4.1.0
       with:
@@ -118,9 +118,6 @@ jobs:
         key: macos-hermes-${{ github.sha}}
         path: output
   build-apple-runtime:
-    defaults:
-      run:
-        working-directory: "~/hermes"
     runs-on: macos-latest
     env:
       TERM: dumb
