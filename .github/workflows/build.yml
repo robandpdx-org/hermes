@@ -136,11 +136,11 @@ jobs:
       with:
         key: v4-repo-${{ github.sha }}
         path: |-
-          hermes/build_iphoneos
-          hermes/build_catalyst
-          hermes/build_iphonesimulator
-          hermes/build_macosx
-          hermes/destroot
+          build_iphoneos
+          build_catalyst
+          build_iphonesimulator
+          build_macosx
+          destroot
     - name: Set up workspace
       run: mkdir -p /tmp/hermes/output
     - name: Install dependencies
@@ -184,11 +184,11 @@ jobs:
       with:
         key: v4-repo-${{ github.sha }}
         path: |-
-          hermes/build_iphoneos
-          hermes/build_catalyst
-          hermes/build_iphonesimulator
-          hermes/build_macosx
-          hermes/destroot
+          build_iphoneos
+          build_catalyst
+          build_iphonesimulator
+          build_macosx
+          destroot
     - name: Install dependencies
       run: brew install cmake ninja
     - name: Build the test application
@@ -229,11 +229,11 @@ jobs:
       with:
         key: v4-repo-${{ github.sha }}
         path: |-
-          hermes/build_iphoneos
-          hermes/build_catalyst
-          hermes/build_iphonesimulator
-          hermes/build_macosx
-          hermes/destroot
+          build_iphoneos
+          build_catalyst
+          build_iphonesimulator
+          build_macosx
+          destroot
     - name: Set up workspace
       run: mkdir -p /tmp/hermes/output
     - name: Install dependencies
