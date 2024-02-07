@@ -365,6 +365,7 @@ jobs:
     - uses: actions/checkout@v4.1.0
     - name: Build NPM
       run: |-
+        ls -lR
         cd npm
         cp ../macos-hermes/* .
         cp ../windows-hermes/* .
