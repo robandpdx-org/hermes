@@ -132,7 +132,7 @@ jobs:
         xcode-version: 13.4.1
     - uses: actions/checkout@v4.1.0
     - name: restore_cache
-      uses: actions/cache@v3.3.2
+      uses: actions/cache@v4.0.0
       with:
         key: v4-repo-${{ github.sha }}
         path: |-
@@ -180,7 +180,7 @@ jobs:
         xcode-version: 13.4.1
     - uses: actions/checkout@v4.1.0
     - name: restore_cache
-      uses: actions/cache@v3.3.2
+      uses: actions/cache@v4.0.0
       with:
         key: v4-repo-${{ github.sha }}
         path: |-
@@ -211,9 +211,6 @@ jobs:
           -scheme ApplePlatformsIntegrationMobileTests
       working-directory: test/ApplePlatformsIntegrationTestApp
   package-apple-runtime:
-    defaults:
-      run:
-        working-directory: "~/hermes"
     runs-on: macos-latest
     needs:
     - test-macos
@@ -228,7 +225,7 @@ jobs:
         xcode-version: 13.4.1
     - uses: actions/checkout@v4.1.0
     - name: restore_cache
-      uses: actions/cache@v3.3.2
+      uses: actions/cache@v4.0.0
       with:
         key: v4-repo-${{ github.sha }}
         path: |-
@@ -292,7 +289,7 @@ jobs:
         Invoke-WebRequest -Uri "$Env:ICU_URL" -OutFile "icu.zip"
         Expand-Archive -Path "icu.zip" -DestinationPath "."
     - name: Setup cmake
-      uses: jwlawson/actions-setup-cmake@v1.14
+      uses: jwlawson/actions-setup-cmake@v2.0.0
       with:
         cmake-version: 3.14.7
     - name: Setup python
