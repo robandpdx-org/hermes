@@ -366,6 +366,12 @@ jobs:
     - name: Build NPM
       run: |-
         cd npm
+        cp ../macos-hermes/* .
+        cp ../windows-hermes/* .
+        cp ../android-hermes/* .
+        cp ../apple-runtime/* .
+        cp ../emscripten-hermes/* .
+        #cp ../linux-hermes/* .
         yarn install
         yarn unpack-builds
         yarn create-npms
