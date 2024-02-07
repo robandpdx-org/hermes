@@ -343,11 +343,9 @@ jobs:
         path: c:\tmp\hermes\output
   npm:
     runs-on: ubuntu-20.04
-    container:
-      image: node:lts
     needs:
     - android
-    - linux
+    #- linux
     - package-apple-runtime
     - windows
     - macos
@@ -356,34 +354,27 @@ jobs:
       TERM: dumb
       DEBIAN_FRONTEND: noninteractive
     steps:
+    - uses: actions/setup-node@v4.0.2
+      with:
+        node-version: lts
     - name: Print versions
       run: |-
         node --version
         yarn --version
-    - name: Install certificates required to attach workspace
-      run: |-
-        sudo apt-get update
-        sudo apt-get install -y ca-certificates
-    - uses: actions/download-artifact@v4.1.0
-      with:
-        path: "/tmp/hermes/input"
+    - uses: actions/download-artifact@v4.1.2
     - name: Install dependencies and set up
       run: mkdir -p /tmp/hermes/output
     - uses: actions/checkout@v4.1.0
     - name: Build NPM
       run: |-
         cd npm
-        cp /tmp/hermes/input/* .
-        $YARN install
-        $YARN unpack-builds
-        $YARN create-npms
+        yarn install
+        yarn unpack-builds
+        yarn create-npms
     - name: Copy artifacts
       run: |-
         cd npm
         cp *.tgz /tmp/hermes/output
-        # Also copy the other packages for the sole purpose of not having
-        # to visit multiple jobs pages to download all release artifacts
-        cp /tmp/hermes/input/*.tar.gz /tmp/hermes/output
     - name: Checksum artifacts
       run: |-
         cd /tmp/hermes/output
@@ -393,10 +384,12 @@ jobs:
         done
     - uses: actions/upload-artifact@v4.3.1
       with:
-        path: "/tmp/hermes/output"
-    - uses: actions/upload-artifact@v4.3.1
+        name: npm-hermes
+        path: /tmp/hermes/output
+    - uses: actions/cache/save@v4.0.0
       with:
-        path: "/tmp/hermes/output/."
+        key: npm-hermes-${{ github.sha}}
+        path: /tmp/hermes/output
   emscripten:
     runs-on: ubuntu-20.04
     container:
@@ -523,7 +516,9 @@ jobs:
     env:
       REACT_NATIVE_OVERRIDE_HERMES_DIR: ${{ github.workspace }}/hermes
     steps:
-    - uses: actions/setup-node@v4.0.0
+    - uses: actions/setup-node@v4.0.2
+      with:
+        node-version: lts
     - name: Setup dependencies
       run: |-
         (yes | sdkmanager "cmake;3.22.1" --verbose) || true
