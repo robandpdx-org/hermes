@@ -5,12 +5,9 @@ on:
     - main
 jobs:
   android:
-    defaults:
-      run:
-        working-directory: "/home/circleci"
     runs-on: ubuntu-latest
     env:
-      HERMES_WS_DIR: "/home/circleci"
+      HERMES_WS_DIR: ${{ github.workspace }}
     steps:
     - name: Set up workspace and install dependencies
       run: |-
@@ -40,24 +37,21 @@ jobs:
         do
           sha256sum "$file" > "$file.sha256"
         done
-    - uses: actions/upload-artifact@v4.0.0
+    - uses: actions/upload-artifact@v4.3.1
       with:
+        name: android-hermes
         path: output
-    - uses: actions/upload-artifact@v4.0.0
+    - uses: actions/cache/save@v4.0.0
       with:
-        path: output/.
+        key: android-hermes-${{ github.sha}}
+        path: output
   linux:
-    defaults:
-      run:
-        working-directory: "/root"
-    runs-on: ubuntu-latest
-    container:
-      image: debian:bullseye
+    runs-on: ubuntu-20.04
     steps:
     - name: Install dependencies
       run: |-
-        apt update
-        apt install -y git openssh-client cmake build-essential \
+        sudo apt update
+        sudo apt install -y git openssh-client cmake build-essential \
             libreadline-dev libicu-dev zip python3
     - uses: actions/checkout@v4.1.0
       with:
@@ -82,12 +76,14 @@ jobs:
         shasum -a 256 output/${TAR_NAME} > output/${TAR_NAME}.sha256
       env:
         TAR_NAME: hermes-cli-linux.tar.gz
-    - uses: actions/upload-artifact@v4.0.0
+    - uses: actions/upload-artifact@v4.3.1
       with:
+        name: linux-hermes
         path: output
-    - uses: actions/upload-artifact@v4.0.0
+    - uses: actions/cache/save@v4.0.0
       with:
-        path: output/.
+        key: linux-hermes-${{ github.sha}}
+        path: output
   macos:
     runs-on: macos-latest
     steps:
@@ -116,16 +112,15 @@ jobs:
         shasum -a 256 output/${TAR_NAME} > output/${TAR_NAME}.sha256
       env:
         TAR_NAME: hermes-cli-darwin.tar.gz
-    - uses: actions/upload-artifact@v4.0.0
+    - uses: actions/upload-artifact@v4.3.1
       with:
+        name: macos-hermes
         path: output
-    - uses: actions/upload-artifact@v4.0.0
+    - uses: actions/cache/save@v4.0.0
       with:
-        path: output/.
+        key: macos-hermes-${{ github.sha}}
+        path: output
   build-apple-runtime:
-    defaults:
-      run:
-        working-directory: "~/hermes"
     runs-on: macos-latest
     env:
       TERM: dumb
@@ -137,15 +132,15 @@ jobs:
         xcode-version: 13.4.1
     - uses: actions/checkout@v4.1.0
     - name: restore_cache
-      uses: actions/cache@v3.3.2
+      uses: actions/cache@v4.0.0
       with:
-        key: v4-repo-{{ .Environment.${{ github.sha }} }}
+        key: v4-repo-${{ github.sha }}
         path: |-
-          ~/hermes/build_iphoneos
-          ~/hermes/build_catalyst
-          ~/hermes/build_iphonesimulator
-          ~/hermes/build_macosx
-          ~/hermes/destroot
+          build_iphoneos
+          build_catalyst
+          build_iphonesimulator
+          build_macosx
+          destroot
     - name: Set up workspace
       run: mkdir -p /tmp/hermes/output
     - name: Install dependencies
@@ -173,12 +168,8 @@ jobs:
         cmake --build ./build
         cmake --build ./build --target check-hermes
   test-apple-runtime:
-    defaults:
-      run:
-        working-directory: "~/hermes"
     runs-on: macos-latest
-    needs:
-    - build-apple-runtime
+    needs: build-apple-runtime
     env:
       TERM: dumb
       HERMES_WS_DIR: "/tmp/hermes"
@@ -189,10 +180,15 @@ jobs:
         xcode-version: 13.4.1
     - uses: actions/checkout@v4.1.0
     - name: restore_cache
-      uses: actions/cache@v3.3.2
+      uses: actions/cache@v4.0.0
       with:
-        key: v4-repo-{{ .Environment.${{ github.sha }} }}
-        path: UPDATE_ME
+        key: v4-repo-${{ github.sha }}
+        path: |-
+          build_iphoneos
+          build_catalyst
+          build_iphonesimulator
+          build_macosx
+          destroot
     - name: Install dependencies
       run: brew install cmake ninja
     - name: Build the test application
@@ -215,9 +211,6 @@ jobs:
           -scheme ApplePlatformsIntegrationMobileTests
       working-directory: test/ApplePlatformsIntegrationTestApp
   package-apple-runtime:
-    defaults:
-      run:
-        working-directory: "~/hermes"
     runs-on: macos-latest
     needs:
     - test-macos
@@ -232,10 +225,15 @@ jobs:
         xcode-version: 13.4.1
     - uses: actions/checkout@v4.1.0
     - name: restore_cache
-      uses: actions/cache@v3.3.2
+      uses: actions/cache@v4.0.0
       with:
-        key: v4-repo-{{ .Environment.${{ github.sha }} }}
-        path: UPDATE_ME
+        key: v4-repo-${{ github.sha }}
+        path: |-
+          build_iphoneos
+          build_catalyst
+          build_iphonesimulator
+          build_macosx
+          destroot
     - name: Set up workspace
       run: mkdir -p /tmp/hermes/output
     - name: Install dependencies
@@ -256,14 +254,16 @@ jobs:
         do
           shasum -a 256 "$file" > "$file.sha256"
         done
-    - uses: actions/upload-artifact@v4.0.0
+    - uses: actions/upload-artifact@v4.3.1
       with:
-        path: "/tmp/hermes/output/"
-    - uses: actions/upload-artifact@v4.0.0
+        name: apple-runtime
+        path: /tmp/hermes/output/
+    - uses: actions/cache/save@v4.0.0
       with:
-        path: "/tmp/hermes/output//."
+        key: apple-runtime-hermes-${{ github.sha}}
+        path: /tmp/hermes/output/
   windows:
-    runs-on: ubuntu-latest
+    runs-on: windows-2019
     env:
       HERMES_WS_DIR: C:\tmp\hermes
       ICU_URL: https://github.com/unicode-org/icu/releases/download/release-64-2/icu4c-64_2-Win64-MSVC2017.zip
@@ -279,7 +279,7 @@ jobs:
         New-Item -ItemType Directory $Env:HERMES_WS_DIR\icu
         New-Item -ItemType Directory $Env:HERMES_WS_DIR\staging
         New-Item -ItemType Directory $Env:HERMES_WS_DIR\output
-        New-Item -ItemType SymbolicLink -Target . -Path $Env:HERMES_WS_DIR -Name hermes
+        New-Item -ItemType SymbolicLink -Target $Env:GITHUB_WORKSPACE -Path $Env:HERMES_WS_DIR -Name hermes
     - name: Download ICU
       run: |-
         cd $Env:HERMES_WS_DIR\icu
@@ -288,12 +288,14 @@ jobs:
         $progressPreference = 'silentlyContinue'
         Invoke-WebRequest -Uri "$Env:ICU_URL" -OutFile "icu.zip"
         Expand-Archive -Path "icu.zip" -DestinationPath "."
-    - name: Install dependencies
-      run: |-
-        choco install --no-progress cmake --version 3.14.7 --installargs 'ADD_CMAKE_TO_PATH=System'
-        if (-not $?) { throw "Failed to install CMake" }
-        choco install --no-progress python3
-        if (-not $?) { throw "Failed to install Python" }
+    - name: Setup cmake
+      uses: jwlawson/actions-setup-cmake@v2.0.0
+      with:
+        cmake-version: 3.14.7
+    - name: Setup python
+      uses: actions/setup-python@v5.0.0
+      with:
+        python-version: 3.12.1
     - name: Assemble Windows runtime dependencies
       run: |-
         cd $Env:HERMES_WS_DIR
@@ -331,16 +333,16 @@ jobs:
         $hash = Get-FileHash -Path $Env:TAR_NAME -Algorithm SHA256
         Write-Output ($hash.Hash + "  " + $Env:TAR_NAME) |
               Out-File -Encoding ASCII -FilePath ($Env:TAR_NAME +".sha256")
-    - uses: actions/upload-artifact@v4.0.0
+    - uses: actions/upload-artifact@v4.3.1
       with:
+        name: windows-hermes
         path: c:\tmp\hermes\output
-    - uses: actions/upload-artifact@v4.0.0
+    - uses: actions/cache/save@v4.0.0
       with:
-        path: c:\tmp\hermes\output/.
+        key: windows-hermes-${{ github.sha}}
+        path: c:\tmp\hermes\output
   npm:
-    runs-on: ubuntu-latest
-    container:
-      image: node:lts
+    runs-on: ubuntu-20.04
     needs:
     - android
     - linux
@@ -352,34 +354,32 @@ jobs:
       TERM: dumb
       DEBIAN_FRONTEND: noninteractive
     steps:
+    - uses: actions/setup-node@v4.0.2
     - name: Print versions
       run: |-
         node --version
         yarn --version
-    - name: Install certificates required to attach workspace
-      run: |-
-        sudo apt-get update
-        sudo apt-get install -y ca-certificates
-    - uses: actions/download-artifact@v4.1.0
-      with:
-        path: "/tmp/hermes/input"
     - name: Install dependencies and set up
       run: mkdir -p /tmp/hermes/output
     - uses: actions/checkout@v4.1.0
+    - uses: actions/download-artifact@v4.1.2
     - name: Build NPM
       run: |-
+        ls -lR
         cd npm
-        cp /tmp/hermes/input/* .
-        $YARN install
-        $YARN unpack-builds
-        $YARN create-npms
+        cp ../macos-hermes/* .
+        cp ../windows-hermes/* .
+        cp ../android-hermes/* .
+        cp ../apple-runtime/* .
+        cp ../emscripten-hermes/* .
+        cp ../linux-hermes/* .
+        yarn install
+        yarn unpack-builds
+        yarn create-npms
     - name: Copy artifacts
       run: |-
         cd npm
         cp *.tgz /tmp/hermes/output
-        # Also copy the other packages for the sole purpose of not having
-        # to visit multiple jobs pages to download all release artifacts
-        cp /tmp/hermes/input/*.tar.gz /tmp/hermes/output
     - name: Checksum artifacts
       run: |-
         cd /tmp/hermes/output
@@ -387,17 +387,16 @@ jobs:
         do
           sha256sum "$file" > "$file.sha256"
         done
-    - uses: actions/upload-artifact@v4.0.0
+    - uses: actions/upload-artifact@v4.3.1
       with:
-        path: "/tmp/hermes/output"
-    - uses: actions/upload-artifact@v4.0.0
+        name: npm-hermes
+        path: /tmp/hermes/output
+    - uses: actions/cache/save@v4.0.0
       with:
-        path: "/tmp/hermes/output/."
+        key: npm-hermes-${{ github.sha}}
+        path: /tmp/hermes/output
   emscripten:
-    defaults:
-      run:
-        working-directory: "/root"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     container:
       image: emscripten/emsdk:2.0.9
     steps:
@@ -434,17 +433,16 @@ jobs:
         shasum -a 256 output/${TAR_NAME} > output/${TAR_NAME}.sha256
       env:
         TAR_NAME: hermes-cli-emscripten.tar.gz
-    - uses: actions/upload-artifact@v4.0.0
+    - uses: actions/upload-artifact@v4.3.1
       with:
+        name: emscripten-hermes
         path: output
-    - uses: actions/upload-artifact@v4.0.0
+    - uses: actions/cache/save@v4.0.0
       with:
-        path: output/.
+        key: emscripten-hermes-${{ github.sha}}
+        path: output/
   sandbox:
-    defaults:
-      run:
-        working-directory: "/root"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     container:
       image: emscripten/emsdk:3.1.39
     env:
@@ -494,17 +492,12 @@ jobs:
         cmake --build build_opt -j 4
         cmake --build build_opt --target check-hermes -j 4
   test-linux:
-    defaults:
-      run:
-        working-directory: "/root"
-    runs-on: ubuntu-latest
-    container:
-      image: debian:bullseye
+    runs-on: ubuntu-20.04
     steps:
     - name: Install dependencies
       run: |-
-        apt update
-        apt install -y git openssh-client cmake build-essential \
+        sudo apt update
+        sudo apt install -y git openssh-client cmake build-essential \
             libicu-dev zip python3
     - uses: actions/checkout@v4.1.0
       with:
@@ -514,28 +507,21 @@ jobs:
         cmake -S hermes -B build
         cmake --build build --target check-hermes all -j 4
   test-windows:
-    runs-on: ubuntu-latest
+    runs-on: windows-2019
     steps:
     - uses: actions/checkout@v4.1.0
       with:
         path: hermes
-    - name: Set up dependencies
-      run: |-
-        choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
-        ln -s C:\tools\miniconda3\python C:\tools\miniconda3\python3
     - name: Run Hermes regression tests
       run: |-
         cmake -S hermes -B build -G 'Visual Studio 16 2019'
         cmake --build build --target check-hermes -- -m /p:UseMultiToolTask=true -m /p:EnforceProcessCountAcrossBuilds=true
   test-e2e:
-    defaults:
-      run:
-        working-directory: "/home/circleci"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     env:
-      REACT_NATIVE_OVERRIDE_HERMES_DIR: "/home/circleci/hermes"
+      REACT_NATIVE_OVERRIDE_HERMES_DIR: ${{ github.workspace }}/hermes
     steps:
-    - uses: actions/setup-node@v4.0.0
+    - uses: actions/setup-node@v4.0.2
     - name: Setup dependencies
       run: |-
         (yes | sdkmanager "cmake;3.22.1" --verbose) || true
@@ -552,12 +538,9 @@ jobs:
 #     # This item has no matching transformer
 #     - circleci_android_start_emulator_and_run_tests:
   test-e2e-intl:
-    defaults:
-      run:
-        working-directory: "/home/circleci"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     env:
-      HERMES_WS_DIR: "/home/circleci"
+      HERMES_WS_DIR: ${{ github.workspace }}
     steps:
     - uses: actions/checkout@v4.1.0
       with:
