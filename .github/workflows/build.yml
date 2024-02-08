@@ -41,10 +41,6 @@ jobs:
       with:
         name: android-hermes
         path: output
-    - uses: actions/cache/save@v4.0.0
-      with:
-        key: android-hermes-${{ github.sha}}
-        path: output
   linux:
     runs-on: ubuntu-20.04
     steps:
@@ -80,10 +76,6 @@ jobs:
       with:
         name: linux-hermes
         path: output
-    - uses: actions/cache/save@v4.0.0
-      with:
-        key: linux-hermes-${{ github.sha}}
-        path: output
   macos:
     runs-on: macos-latest
     steps:
@@ -116,10 +108,6 @@ jobs:
       with:
         name: macos-hermes
         path: output
-    - uses: actions/cache/save@v4.0.0
-      with:
-        key: macos-hermes-${{ github.sha}}
-        path: output
   build-apple-runtime:
     runs-on: macos-latest
     env:
@@ -131,7 +119,7 @@ jobs:
       with:
         xcode-version: 13.4.1
     - uses: actions/checkout@v4.1.0
-    - name: restore_cache
+    - name: Cache setup
       uses: actions/cache@v4.0.0
       with:
         key: v4-repo-${{ github.sha }}
@@ -179,7 +167,7 @@ jobs:
       with:
         xcode-version: 13.4.1
     - uses: actions/checkout@v4.1.0
-    - name: restore_cache
+    - name: Cache setup
       uses: actions/cache@v4.0.0
       with:
         key: v4-repo-${{ github.sha }}
@@ -224,7 +212,7 @@ jobs:
       with:
         xcode-version: 13.4.1
     - uses: actions/checkout@v4.1.0
-    - name: restore_cache
+    - name: Cache setup
       uses: actions/cache@v4.0.0
       with:
         key: v4-repo-${{ github.sha }}
@@ -257,10 +245,6 @@ jobs:
     - uses: actions/upload-artifact@v4.3.1
       with:
         name: apple-runtime
-        path: /tmp/hermes/output/
-    - uses: actions/cache/save@v4.0.0
-      with:
-        key: apple-runtime-hermes-${{ github.sha}}
         path: /tmp/hermes/output/
   windows:
     runs-on: windows-2019
@@ -337,10 +321,6 @@ jobs:
       with:
         name: windows-hermes
         path: c:\tmp\hermes\output
-    - uses: actions/cache/save@v4.0.0
-      with:
-        key: windows-hermes-${{ github.sha}}
-        path: c:\tmp\hermes\output
   npm:
     runs-on: ubuntu-20.04
     needs:
@@ -391,10 +371,6 @@ jobs:
       with:
         name: npm-hermes
         path: /tmp/hermes/output
-    - uses: actions/cache/save@v4.0.0
-      with:
-        key: npm-hermes-${{ github.sha}}
-        path: /tmp/hermes/output
   emscripten:
     runs-on: ubuntu-20.04
     container:
@@ -437,10 +413,6 @@ jobs:
       with:
         name: emscripten-hermes
         path: output
-    - uses: actions/cache/save@v4.0.0
-      with:
-        key: emscripten-hermes-${{ github.sha}}
-        path: output/
   sandbox:
     runs-on: ubuntu-20.04
     container:
