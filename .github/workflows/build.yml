@@ -507,34 +507,28 @@ jobs:
         cd react-native
         yarn install
         echo "console.log('Using Hermes: ' + (global.HermesInternal != null));" >> packages/rn-tester/js/RNTesterApp.android.js
-  test-e2e-android:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Enable KVM group perms
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      - name: Checkout
-        uses: actions/checkout@v4.1.1
-
-      - name: Set up JDK 11
-        uses: actions/setup-java@v4.1.0
-        with:
-          java-version: 11
-          distribution: 'adopt'
-          cache: 'gradle'
-        
-      - name: Run connected tests
-        uses: ReactiveCircus/android-emulator-runner@v2
-        with:
-          api-level: 30
-          target: google_apis
-          arch: x86_64
-          script: >
-            ./gradlew -PreactNativeArchitectures=x86 :packages:rn-tester:android:app:installHermesRelease
-            && adb shell am start com.facebook.react.uiapp/.RNTesterActivity
-            && timeout 30s adb logcat -e "Using Hermes: true" -m 1
+    - name: Enable KVM group perms
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4.1.0
+      with:
+        java-version: 11
+        distribution: 'adopt'
+        cache: 'gradle'
+    - name: Run connected tests
+      uses: ReactiveCircus/android-emulator-runner@v2
+      with:
+        api-level: 30
+        target: google_apis
+        arch: x86_64
+        script: >
+          cd react-native
+          &&./gradlew -PreactNativeArchitectures=x86 :packages:rn-tester:android:app:installHermesRelease
+          && adb shell am start com.facebook.react.uiapp/.RNTesterActivity
+          && timeout 30s adb logcat -e "Using Hermes: true" -m 1
   test-e2e-intl:
     runs-on: ubuntu-20.04
     env:
@@ -554,8 +548,26 @@ jobs:
       run: |-
         cmake -S hermes -B ./build -DCMAKE_BUILD_TYPE=Release
         cmake --build ./build -j 4 --target hermesc
-#     # This item has no matching transformer
-#     - circleci_android_start_emulator_and_run_tests:
+    - name: Enable KVM group perms
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4.1.0
+      with:
+        java-version: 11
+        distribution: 'adopt'
+        cache: 'gradle'
+    - name: Run connected tests
+      uses: ReactiveCircus/android-emulator-runner@v2
+      with:
+        api-level: 30
+        target: google_apis
+        arch: x86_64
+        script: >
+          cd hermes/android
+          && ./gradlew :intltest:prepareTests && ./gradlew -Pabis=x86 :intltest:connectedAndroidTest
   test-macos-test262:
     runs-on: macos-latest
     steps:
