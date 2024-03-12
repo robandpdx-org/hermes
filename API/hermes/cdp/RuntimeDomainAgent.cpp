@@ -254,6 +254,7 @@ class CallFunctionOnBuilder {
 RuntimeDomainAgent::RuntimeDomainAgent(
     int32_t executionContextID,
     HermesRuntime &runtime,
+    debugger::AsyncDebuggerAPI &asyncDebuggerAPI,
     SynchronizedOutboundCallback messageCallback,
     std::shared_ptr<RemoteObjectsTable> objTable,
     ConsoleMessageStorage &consoleMessageStorage,
@@ -263,6 +264,7 @@ RuntimeDomainAgent::RuntimeDomainAgent(
           std::move(messageCallback),
           std::move(objTable)),
       runtime_(runtime),
+      asyncDebuggerAPI_(asyncDebuggerAPI),
       consoleMessageStorage_(consoleMessageStorage),
       consoleMessageDispatcher_(consoleMessageDispatcher),
       enabled_(false) {
@@ -312,8 +314,8 @@ void RuntimeDomainAgent::enable() {
 
 void RuntimeDomainAgent::enable(const m::runtime::EnableRequest &req) {
   // Match V8 behavior of returning success even if domain is already enabled
-  sendResponseToClient(m::makeOkResponse(req.id));
   enable();
+  sendResponseToClient(m::makeOkResponse(req.id));
 }
 
 void RuntimeDomainAgent::disable(const m::runtime::DisableRequest &req) {
@@ -338,11 +340,29 @@ void RuntimeDomainAgent::globalLexicalScopeNames(
     const m::runtime::GlobalLexicalScopeNamesRequest &req) {
   // Allow this message even if domain is not enabled to match V8 behavior.
 
+  if (req.executionContextId.has_value() &&
+      !validateExecutionContextId(*req.executionContextId, req.id)) {
+    return;
+  }
+
+  if (!asyncDebuggerAPI_.isPaused()) {
+    sendResponseToClient(m::makeErrorResponse(
+        req.id,
+        m::ErrorCode::InvalidRequest,
+        "Cannot get global scope names unless execution is paused"));
+    return;
+  }
+
   const debugger::ProgramState &state =
       runtime_.getDebugger().getProgramState();
+  assert(
+      state.getStackTrace().callFrameCount() > 0 &&
+      "Paused with no call frames");
   const debugger::LexicalInfo &lexicalInfo = state.getLexicalInfo(0);
   debugger::ScopeDepth scopeCount = lexicalInfo.getScopesCount();
   if (scopeCount == 0) {
+    sendResponseToClient(m::makeErrorResponse(
+        req.id, m::ErrorCode::InvalidRequest, "No scope descriptor"));
     return;
   }
   const debugger::ScopeDepth globalScopeIndex = scopeCount - 1;
@@ -368,6 +388,10 @@ void RuntimeDomainAgent::compileScript(
   if (!checkRuntimeEnabled(req)) {
     return;
   }
+  if (req.executionContextId.has_value() &&
+      !validateExecutionContextId(*req.executionContextId, req.id)) {
+    return;
+  }
 
   m::runtime::CompileScriptResponse resp;
   resp.id = req.id;
@@ -376,7 +400,7 @@ void RuntimeDomainAgent::compileScript(
   std::shared_ptr<const jsi::PreparedJavaScript> preparedScript;
   try {
     preparedScript = runtime_.prepareJavaScript(source, req.sourceURL);
-  } catch (const facebook::jsi::JSIException &err) {
+  } catch (const jsi::JSIException &err) {
     resp.exceptionDetails = m::runtime::ExceptionDetails();
     resp.exceptionDetails->text = err.what();
     sendResponseToClient(resp);
@@ -406,10 +430,26 @@ void RuntimeDomainAgent::getProperties(
   m::runtime::GetPropertiesResponse resp;
   resp.id = req.id;
   if (scopePtr != nullptr) {
+    if (!asyncDebuggerAPI_.isPaused()) {
+      sendResponseToClient(m::makeErrorResponse(
+          req.id,
+          m::ErrorCode::InvalidRequest,
+          "Cannot get scope properties unless execution is paused"));
+      return;
+    }
     const debugger::ProgramState &state =
         runtime_.getDebugger().getProgramState();
-    resp.result =
+    auto result =
         makePropsFromScope(*scopePtr, objGroup, state, generatePreview);
+    if (!result) {
+      sendResponseToClient(m::makeErrorResponse(
+          req.id,
+          m::ErrorCode::InvalidRequest,
+          "Could not inspect specified scope"));
+      return;
+    }
+    resp.result = std::move(*result);
+
   } else if (valuePtr != nullptr) {
     resp.result =
         makePropsFromValue(*valuePtr, objGroup, ownProperties, generatePreview);
@@ -419,6 +459,11 @@ void RuntimeDomainAgent::getProperties(
 
 void RuntimeDomainAgent::evaluate(const m::runtime::EvaluateRequest &req) {
   // Allow this to be used when domain is not enabled to match V8 behavior.
+
+  if (req.contextId.has_value() &&
+      !validateExecutionContextId(*req.contextId, req.id)) {
+    return;
+  }
 
   m::runtime::EvaluateResponse resp;
   resp.id = req.id;
@@ -438,11 +483,14 @@ void RuntimeDomainAgent::evaluate(const m::runtime::EvaluateRequest &req) {
     auto remoteObjPtr = m::runtime::makeRemoteObject(
         runtime_, result, *objTable_, objectGroup, byValue, generatePreview);
     resp.result = std::move(remoteObjPtr);
-  } catch (const facebook::jsi::JSError &error) {
+  } catch (const jsi::JSError &error) {
     resp.exceptionDetails = m::runtime::ExceptionDetails();
     resp.exceptionDetails->text = error.getMessage() + "\n" + error.getStack();
     resp.exceptionDetails->exception = m::runtime::makeRemoteObject(
         runtime_, error.value(), *objTable_, objectGroup, false, false);
+  } catch (const jsi::JSIException &err) {
+    resp.exceptionDetails = m::runtime::ExceptionDetails();
+    resp.exceptionDetails->text = err.what();
   }
 
   sendResponseToClient(resp);
@@ -469,12 +517,7 @@ void RuntimeDomainAgent::callFunctionOn(
     assert(
         req.executionContextId &&
         "should not be here if both object id and execution context id are missing");
-    if (*req.executionContextId != executionContextID_) {
-      sendResponseToClient(m::makeErrorResponse(
-          req.id,
-          m::ErrorCode::InvalidRequest,
-          "unknown execution context id " +
-              std::to_string(*req.executionContextId)));
+    if (!validateExecutionContextId(*req.executionContextId, req.id)) {
       return;
     }
   }
@@ -493,7 +536,7 @@ void RuntimeDomainAgent::callFunctionOn(
     evalResult = runtime_.evaluateJavaScript(
         std::unique_ptr<jsi::StringBuffer>(new jsi::StringBuffer(expression)),
         kEvaluatedCodeUrl);
-  } catch (const facebook::jsi::JSError &error) {
+  } catch (const jsi::JSIException &error) {
     sendResponseToClient(m::makeErrorResponse(
         req.id,
         m::ErrorCode::InternalError,
@@ -526,7 +569,21 @@ bool RuntimeDomainAgent::checkRuntimeEnabled(const m::Request &req) {
   return true;
 }
 
-std::vector<m::runtime::PropertyDescriptor>
+bool RuntimeDomainAgent::validateExecutionContextId(
+    m::runtime::ExecutionContextId executionContextId,
+    long long commandId) {
+  if (executionContextId == executionContextID_) {
+    return true;
+  }
+
+  sendResponseToClient(m::makeErrorResponse(
+      commandId,
+      m::ErrorCode::InvalidRequest,
+      "Unknown execution context id: " + std::to_string(executionContextId)));
+  return false;
+}
+
+std::optional<std::vector<m::runtime::PropertyDescriptor>>
 RuntimeDomainAgent::makePropsFromScope(
     std::pair<uint32_t, uint32_t> frameAndScopeIndex,
     const std::string &objectGroup,
@@ -540,7 +597,13 @@ RuntimeDomainAgent::makePropsFromScope(
 
   uint32_t frameIndex = frameAndScopeIndex.first;
   uint32_t scopeIndex = frameAndScopeIndex.second;
+  if (frameIndex >= state.getStackTrace().callFrameCount()) {
+    return std::nullopt;
+  }
   debugger::LexicalInfo lexicalInfo = state.getLexicalInfo(frameIndex);
+  if (scopeIndex >= lexicalInfo.getScopesCount()) {
+    return std::nullopt;
+  }
   uint32_t varCount = lexicalInfo.getVariablesCountInScope(scopeIndex);
 
   // If this is the frame's local scope, include 'this'.
@@ -623,7 +686,7 @@ RuntimeDomainAgent::makePropsFromValue(
             objectGroup,
             false,
             generatePreview);
-      } catch (const jsi::JSError &err) {
+      } catch (const jsi::JSIException &err) {
         // We fetched a property with a getter that threw. Show a placeholder.
         // We could have added additional info, but the UI quickly gets messy.
         desc.value = m::runtime::makeRemoteObject(

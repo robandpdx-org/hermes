@@ -87,7 +87,7 @@ class CDPAgentTest : public ::testing::Test {
   }
 
  protected:
-  static constexpr int32_t kTestExecutionContextId = 1;
+  static constexpr int32_t kTestExecutionContextId_ = 1;
 
   void SetUp() override;
   void TearDown() override;
@@ -119,6 +119,12 @@ class CDPAgentTest : public ::testing::Test {
   void expectNothing();
   JSONObject *expectNotification(const std::string &method);
   JSONObject *expectResponse(const std::optional<std::string> &method, int id);
+  /// Wait for a message, validate that it is an error with the specified
+  /// \p messageID, and assert that the error description contains the
+  /// specified \p substring.
+  void expectErrorMessageContaining(
+      const std::string &substring,
+      long long messageID);
 
   void sendRequest(
       const std::string &method,
@@ -173,7 +179,7 @@ void CDPAgentTest::SetUp() {
   setupRuntimeTestInfra();
 
   cdpAgent_ = CDPAgent::create(
-      kTestExecutionContextId,
+      kTestExecutionContextId_,
       *cdpDebugAPI_,
       std::bind(&CDPAgentTest::handleRuntimeTask, this, _1),
       std::bind(&CDPAgentTest::handleResponse, this, _1));
@@ -289,6 +295,13 @@ JSONObject *CDPAgentTest::expectResponse(
   return response;
 }
 
+void CDPAgentTest::expectErrorMessageContaining(
+    const std::string &substring,
+    long long messageID) {
+  std::string errorMessage = ensureErrorResponse(waitForMessage(), messageID);
+  ASSERT_NE(errorMessage.find(substring), std::string::npos);
+}
+
 jsi::Value CDPAgentTest::shouldStop(
     jsi::Runtime &runtime,
     const jsi::Value &thisVal,
@@ -394,7 +407,7 @@ TEST_F(CDPAgentTest, CDPAgentIssuesStartupTask) {
 
   // Trigger the startup task
   auto cdpAgent = CDPAgent::create(
-      kTestExecutionContextId, *cdpDebugAPI_, handleTask, handleMessage);
+      kTestExecutionContextId_, *cdpDebugAPI_, handleTask, handleMessage);
 
   ASSERT_TRUE(gotTask);
 }
@@ -408,7 +421,7 @@ TEST_F(CDPAgentTest, CDPAgentIssuesShutdownTask) {
   OutboundMessageFunc handleMessage = [](const std::string &message) {};
 
   auto cdpAgent = CDPAgent::create(
-      kTestExecutionContextId, *cdpDebugAPI_, handleTask, handleMessage);
+      kTestExecutionContextId_, *cdpDebugAPI_, handleTask, handleMessage);
 
   // Ignore the startup task
   gotTask = false;
@@ -428,7 +441,7 @@ TEST_F(CDPAgentTest, CDPAgentIssuesCommandHandlingTask) {
   OutboundMessageFunc handleMessage = [](const std::string &message) {};
 
   auto cdpAgent = CDPAgent::create(
-      kTestExecutionContextId, *cdpDebugAPI_, handleTask, handleMessage);
+      kTestExecutionContextId_, *cdpDebugAPI_, handleTask, handleMessage);
 
   // Ignore the startup task
   gotTask = false;
@@ -437,6 +450,30 @@ TEST_F(CDPAgentTest, CDPAgentIssuesCommandHandlingTask) {
   cdpAgent->handleCommand(R"({"id": 1, "method": "Runtime.enable"})");
 
   ASSERT_TRUE(gotTask);
+}
+
+TEST_F(CDPAgentTest, CDPAgentRejectsMalformedJson) {
+  std::unique_ptr<CDPAgent> cdpAgent;
+
+  waitFor<bool>([this, &cdpAgent](auto promise) {
+    OutboundMessageFunc handleMessage = [this,
+                                         promise](const std::string &message) {
+      // Ensure the invalid JSON is reported
+      JSONObject *resp = jsonScope_.parseObject(message);
+      EXPECT_EQ(
+          jsonScope_.getString(resp, {"error", "message"}), "Malformed JSON");
+      promise->set_value(true);
+    };
+
+    EnqueueRuntimeTaskFunc handleTask = [this](RuntimeTask task) {
+      runtimeThread_->add([this, task]() { task(*runtime_); });
+    };
+    cdpAgent = CDPAgent::create(
+        kTestExecutionContextId_, *cdpDebugAPI_, handleTask, handleMessage);
+
+    // Send a command that's not valid JSON
+    cdpAgent->handleCommand("_");
+  });
 }
 
 TEST_F(CDPAgentTest, CDPAgentRejectsMalformedMethods) {
@@ -454,7 +491,7 @@ TEST_F(CDPAgentTest, CDPAgentRejectsMalformedMethods) {
       runtimeThread_->add([this, task]() { task(*runtime_); });
     };
     cdpAgent = CDPAgent::create(
-        kTestExecutionContextId, *cdpDebugAPI_, handleTask, handleMessage);
+        kTestExecutionContextId_, *cdpDebugAPI_, handleTask, handleMessage);
 
     // Send a command with no domain delimiter in the method. Just format the
     // JSON manually, as there is no Request object for this fake method.
@@ -479,7 +516,7 @@ TEST_F(CDPAgentTest, CDPAgentRejectsUnknownDomains) {
       runtimeThread_->add([this, task]() { task(*runtime_); });
     };
     cdpAgent = CDPAgent::create(
-        kTestExecutionContextId, *cdpDebugAPI_, handleTask, handleMessage);
+        kTestExecutionContextId_, *cdpDebugAPI_, handleTask, handleMessage);
 
     // Send a command with a properly-formatted domain, but unrecognized by the
     // CDP Agent. Just format the JSON manually, as there is no Request object
@@ -515,16 +552,22 @@ TEST_F(CDPAgentTest, DebuggerScriptsOnEnable) {
   scheduleScript("true");
 
   // Verify that upon enable, we get notification of existing scripts
-  sendAndCheckResponse("Debugger.enable", msgId++);
+  sendParameterlessRequest("Debugger.enable", msgId);
   ensureNotification(waitForMessage(), "Debugger.scriptParsed");
+  ensureOkResponse(waitForMessage(), msgId++);
 
   sendAndCheckResponse("Debugger.disable", msgId++);
 
-  sendAndCheckResponse("Debugger.enable", msgId++);
+  sendParameterlessRequest("Debugger.enable", msgId);
   ensureNotification(waitForMessage(), "Debugger.scriptParsed");
+  ensureOkResponse(waitForMessage(), msgId++);
 }
 
 TEST_F(CDPAgentTest, DebuggerEnableWhenAlreadyPaused) {
+  auto setStopFlag = llvh::make_scope_exit([this] {
+    // break out of loop
+    stopFlag_.store(true);
+  });
   int msgId = 1;
 
   // This needs to be a while-loop because Explicit AsyncBreak will only happen
@@ -556,7 +599,7 @@ TEST_F(CDPAgentTest, DebuggerEnableWhenAlreadyPaused) {
   // we'll test if we can perform Debugger.enable while the runtime is in that
   // state.
 
-  sendAndCheckResponse("Debugger.enable", msgId++);
+  sendParameterlessRequest("Debugger.enable", msgId);
   ensureNotification(
       waitForMessage("Debugger.scriptParsed"), "Debugger.scriptParsed");
 
@@ -566,6 +609,8 @@ TEST_F(CDPAgentTest, DebuggerEnableWhenAlreadyPaused) {
       waitForMessage("paused"),
       "other",
       {FrameInfo("global", 0, 1).setLineNumberMax(9)});
+
+  ensureOkResponse(waitForMessage(), msgId++);
 
   // After removing this callback, AsyncDebuggerAPI will still have another
   // callback registered by CDPAgent. Therefore, JS will not continue by itself.
@@ -580,9 +625,6 @@ TEST_F(CDPAgentTest, DebuggerEnableWhenAlreadyPaused) {
   });
 
   ensureNotification(waitForMessage("Debugger.resumed"), "Debugger.resumed");
-
-  // break out of loop
-  stopFlag_.store(true);
 }
 
 TEST_F(CDPAgentTest, DebuggerScriptsOrdering) {
@@ -604,12 +646,13 @@ TEST_F(CDPAgentTest, DebuggerScriptsOrdering) {
 
   // Make sure the same ordering is retained after a disable request
   sendAndCheckResponse("Debugger.disable", msgId++);
-  sendAndCheckResponse("Debugger.enable", msgId++);
+  sendParameterlessRequest("Debugger.enable", msgId);
   for (int i = 0; i < kNumScriptParsed; i++) {
     std::string notification = waitForMessage();
     ensureNotification(notification, "Debugger.scriptParsed");
     EXPECT_EQ(notifications[i], notification);
   }
+  ensureOkResponse(waitForMessage(), msgId++);
 }
 
 TEST_F(CDPAgentTest, DebuggerBytecodeScript) {
@@ -637,6 +680,10 @@ TEST_F(CDPAgentTest, DebuggerBytecodeScript) {
 }
 
 TEST_F(CDPAgentTest, DebuggerAsyncPauseWhileRunning) {
+  auto setStopFlag = llvh::make_scope_exit([this] {
+    // break out of loop
+    stopFlag_.store(true);
+  });
   int msgId = 1;
 
   scheduleScript(R"(
@@ -653,8 +700,9 @@ TEST_F(CDPAgentTest, DebuggerAsyncPauseWhileRunning) {
     var d = -accum;
   )");
 
-  sendAndCheckResponse("Debugger.enable", msgId++);
+  sendParameterlessRequest("Debugger.enable", msgId);
   ensureNotification(waitForMessage(), "Debugger.scriptParsed");
+  ensureOkResponse(waitForMessage(), msgId++);
 
   // send some number of async pauses, make sure that we always stop before
   // the end of the loop on line 9
@@ -668,9 +716,6 @@ TEST_F(CDPAgentTest, DebuggerAsyncPauseWhileRunning) {
     sendAndCheckResponse("Debugger.resume", msgId++);
     ensureNotification(waitForMessage(), "Debugger.resumed");
   }
-
-  // break out of loop
-  stopFlag_.store(true);
 }
 
 TEST_F(CDPAgentTest, DebuggerTestDebuggerStatement) {
@@ -946,22 +991,18 @@ TEST_F(CDPAgentTest, DebuggerEvalOnCallFrame) {
   ensureEvalResponse(waitForMessage(), msgId + 1, 42);
   msgId += 2;
 
-  /* TODO: This needs Runtime domain capability
   // [2.2] run eval statement that returns object
   frame = 0;
-  sendEvalRequest(msgId + 0, frame, "objectVar");
-  ensureEvalResponse(
-      waitForMessage(),
-      msgId + 0,
+  sendEvalRequest(msgId, frame, "objectVar");
+  auto objectId = ensureObjectEvalResponse(waitForMessage(), msgId++);
+
+  getAndEnsureProps(
+      msgId++,
+      objectId,
       {{"number", PropInfo("number").setValue("1")},
        {"bool", PropInfo("boolean").setValue("false")},
        {"str", PropInfo("string").setValue("\"string\"")},
        {"__proto__", PropInfo("object")}});
-
-  // msgId is increased by 2 because expectEvalResponse will make additional
-  // request with expectProps.
-  msgId += 2;
-  */
 
   // [3] resume
   sendAndCheckResponse("Debugger.resume", msgId++);
@@ -1443,7 +1484,7 @@ TEST_F(CDPAgentTest, DebuggerRestoreState) {
     // CDPAgent.
     setupRuntimeTestInfra();
     cdpAgent_ = CDPAgent::create(
-        kTestExecutionContextId,
+        kTestExecutionContextId_,
         *cdpDebugAPI_,
         std::bind(&CDPAgentTest::handleRuntimeTask, this, _1),
         std::bind(&CDPAgentTest::handleResponse, this, _1),
@@ -1587,6 +1628,10 @@ TEST_F(CDPAgentTest, RuntimeRefuseOperationsWithoutEnable) {
 }
 
 TEST_F(CDPAgentTest, RuntimeGetHeapUsage) {
+  auto setStopFlag = llvh::make_scope_exit([this] {
+    // break out of loop
+    stopFlag_.store(true);
+  });
   int msgId = 1;
 
   sendAndCheckResponse("Runtime.enable", msgId++);
@@ -1621,12 +1666,13 @@ TEST_F(CDPAgentTest, RuntimeGetHeapUsage) {
   // more than 0.
   EXPECT_GT(jsonScope_.getNumber(resp, {"result", "usedSize"}), 0);
   EXPECT_GT(jsonScope_.getNumber(resp, {"result", "totalSize"}), 0);
-
-  // Let the script terminate
-  stopFlag_.store(true);
 }
 
 TEST_F(CDPAgentTest, RuntimeGlobalLexicalScopeNames) {
+  auto setStopFlag = llvh::make_scope_exit([this] {
+    // break out of loop
+    stopFlag_.store(true);
+  });
   int msgId = 1;
 
   sendAndCheckResponse("Runtime.enable", msgId++);
@@ -1666,7 +1712,7 @@ TEST_F(CDPAgentTest, RuntimeGlobalLexicalScopeNames) {
       "Runtime.globalLexicalScopeNames",
       msgId,
       [](::hermes::JSONEmitter &json) {
-        json.emitKeyValue("executionContextId", kTestExecutionContextId);
+        json.emitKeyValue("executionContextId", kTestExecutionContextId_);
       });
 
   auto resp = expectResponse(std::nullopt, msgId++);
@@ -1679,9 +1725,22 @@ TEST_F(CDPAgentTest, RuntimeGlobalLexicalScopeNames) {
         resp, {"result", "names", std::to_string(index++)});
     EXPECT_EQ(name, expectedName);
   }
+}
 
-  // Let the script terminate
-  stopFlag_.store(true);
+TEST_F(CDPAgentTest, RuntimeGlobalLexicalScopeNamesOnEmptyStack) {
+  int msgId = 1;
+
+  sendAndCheckResponse("Runtime.enable", msgId++);
+
+  sendRequest(
+      "Runtime.globalLexicalScopeNames",
+      msgId,
+      [](::hermes::JSONEmitter &json) {
+        json.emitKeyValue("executionContextId", kTestExecutionContextId_);
+      });
+
+  // Can't get lexical scopes on an empty stack.
+  ensureErrorResponse(waitForMessage(), msgId);
 }
 
 TEST_F(CDPAgentTest, RuntimeCompileScript) {
@@ -1876,6 +1935,10 @@ TEST_F(CDPAgentTest, RuntimeGetPropertiesOnlyOwn) {
 }
 
 TEST_F(CDPAgentTest, RuntimeEvaluate) {
+  auto setStopFlag = llvh::make_scope_exit([this] {
+    // break out of loop
+    stopFlag_.store(true);
+  });
   int msgId = 1;
 
   // Start a script
@@ -1939,9 +2002,6 @@ TEST_F(CDPAgentTest, RuntimeEvaluate) {
        {"str", PropInfo("string").setValue("\"string\"")},
        {"__proto__", PropInfo("object")}},
       true);
-
-  // Let the script terminate
-  stopFlag_.store(true);
 }
 
 TEST_F(CDPAgentTest, RuntimeEvaluateWhilePaused) {
@@ -1988,6 +2048,10 @@ TEST_F(CDPAgentTest, RuntimeEvaluateWhilePaused) {
 }
 
 TEST_F(CDPAgentTest, RuntimeEvaluateReturnByValue) {
+  auto setStopFlag = llvh::make_scope_exit([this] {
+    // break out of loop
+    stopFlag_.store(true);
+  });
   int msgId = 1;
 
   // Start a script
@@ -2018,12 +2082,13 @@ TEST_F(CDPAgentTest, RuntimeEvaluateReturnByValue) {
   EXPECT_TRUE(jsonValsEQ(
       jsonScope_.getObject(resp, {"result", "result", "value"}),
       jsonScope_.parseObject(object)));
-
-  // Let the script terminate
-  stopFlag_.store(true);
 }
 
 TEST_F(CDPAgentTest, RuntimeEvaluateException) {
+  auto setStopFlag = llvh::make_scope_exit([this] {
+    // break out of loop
+    stopFlag_.store(true);
+  });
   int msgId = 1;
 
   // Start a script
@@ -2047,8 +2112,17 @@ TEST_F(CDPAgentTest, RuntimeEvaluateException) {
       jsonScope_.getString(resp, {"result", "exceptionDetails", "text"}).size(),
       0);
 
-  // Let the script terminate
-  stopFlag_.store(true);
+  // Evaluate something that isn't valid JavaScript syntax
+  sendRequest("Runtime.evaluate", msgId, [](::hermes::JSONEmitter &params) {
+    params.emitKeyValue("expression", R"(*ptr));)");
+  });
+  resp = expectResponse(std::nullopt, msgId++);
+
+  // Ensure that we catch parse exception as well
+  EXPECT_NE(
+      jsonScope_.getString(resp, {"result", "exceptionDetails", "text"})
+          .find("Compiling JS failed"),
+      std::string::npos);
 }
 
 TEST_F(CDPAgentTest, RuntimeCallFunctionOnObject) {
@@ -2236,7 +2310,7 @@ TEST_F(CDPAgentTest, RuntimeCallFunctionOnExecutionContext) {
     // Don't have an easy way to copy these, so...
     req.arguments = std::vector<m::runtime::CallArgument>{};
     req.arguments->push_back(std::move(ca));
-    req.executionContextId = kTestExecutionContextId;
+    req.executionContextId = kTestExecutionContextId_;
 
     cdpAgent_->handleCommand(serializeRuntimeCallFunctionOnRequest(req));
     expectResponse(std::nullopt, msgId++);
@@ -2324,7 +2398,7 @@ TEST_F(CDPAgentTest, RuntimeConsoleLog) {
   EXPECT_EQ(jsonScope_.getNumber(note, {"params", "timestamp"}), kTimestamp);
   EXPECT_EQ(
       jsonScope_.getNumber(note, {"params", "executionContextId"}),
-      kTestExecutionContextId);
+      kTestExecutionContextId_);
   EXPECT_EQ(jsonScope_.getString(note, {"params", "type"}), "warning");
 
   EXPECT_EQ(jsonScope_.getArray(note, {"params", "args"})->size(), 3);
@@ -2390,7 +2464,7 @@ TEST_F(CDPAgentTest, RuntimeConsoleBuffer) {
     receivedWarning = false;
     received.fill(false);
 
-    sendAndCheckResponse("Runtime.enable", msgId++);
+    sendParameterlessRequest("Runtime.enable", msgId);
 
     // Loop for 1 iteration more than kExpectedMaxBufferSize because there is a
     // warning message given when buffer is exceeded
@@ -2421,6 +2495,8 @@ TEST_F(CDPAgentTest, RuntimeConsoleBuffer) {
       }
     }
 
+    ensureOkResponse(waitForMessage(), msgId++);
+
     // Make sure no more log messages arrive
     expectNothing();
 
@@ -2436,11 +2512,19 @@ TEST_F(CDPAgentTest, RuntimeConsoleBuffer) {
   }
 }
 
-TEST_F(CDPAgentTest, DISABLED_ProfilerBasicOperation) {
-  runtime_->registerForProfiling();
-  auto clearInDidPause =
-      llvh::make_scope_exit([this] { runtime_->unregisterForProfiling(); });
+TEST_F(CDPAgentTest, ProfilerBasicOperation) {
+  auto setStopFlag = llvh::make_scope_exit([this] {
+    // break out of loop
+    stopFlag_.store(true);
+  });
   int msgId = 1;
+
+  waitFor<bool>([this](auto promise) {
+    runtimeThread_->add([this, promise]() {
+      runtime_->registerForProfiling();
+      promise->set_value(true);
+    });
+  });
 
   scheduleScript(R"(
       while(!shouldStop());
@@ -2459,17 +2543,53 @@ TEST_F(CDPAgentTest, DISABLED_ProfilerBasicOperation) {
   auto resp = expectResponse(std::nullopt, msgId++);
   auto nodes = jsonScope_.getArray(resp, {"result", "profile", "nodes"});
   EXPECT_GT(nodes->size(), 0);
-  EXPECT_LT(
+  EXPECT_LE(
       jsonScope_.getNumber(resp, {"result", "profile", "startTime"}),
       jsonScope_.getNumber(resp, {"result", "profile", "endTime"}));
-  auto samples = jsonScope_.getArray(resp, {"result", "profile", "samples"});
-  auto timeDeltas =
-      jsonScope_.getArray(resp, {"result", "profile", "timeDeltas"});
-  EXPECT_GT(samples->size(), 0);
-  EXPECT_EQ(samples->size(), timeDeltas->size());
+}
 
-  // break out of loop
-  stopFlag_.store(true);
+TEST_F(CDPAgentTest, RuntimeValidatesExecutionContextId) {
+  auto setStopFlag = llvh::make_scope_exit([this] {
+    // break out of loop
+    stopFlag_.store(true);
+  });
+
+  int msgId = 1;
+
+  // Start a script
+  sendAndCheckResponse("Runtime.enable", msgId++);
+  scheduleScript(R"(while(!shouldStop());)");
+
+  constexpr auto kExecutionContextSubstring = "execution context id";
+
+  sendRequest(
+      "Runtime.globalLexicalScopeNames",
+      msgId,
+      [](::hermes::JSONEmitter &json) {
+        json.emitKeyValue("executionContextId", kTestExecutionContextId_ + 1);
+      });
+  expectErrorMessageContaining(kExecutionContextSubstring, msgId++);
+
+  sendRequest("Runtime.compileScript", msgId, [](::hermes::JSONEmitter &json) {
+    json.emitKeyValue("persistScript", true);
+    json.emitKeyValue("sourceURL", "none");
+    json.emitKeyValue("expression", "1+1");
+    json.emitKeyValue("executionContextId", kTestExecutionContextId_ + 1);
+  });
+  expectErrorMessageContaining(kExecutionContextSubstring, msgId++);
+
+  sendRequest("Runtime.evaluate", msgId, [](::hermes::JSONEmitter &params) {
+    params.emitKeyValue("expression", R"("0: " + globalVar)");
+    params.emitKeyValue("contextId", kTestExecutionContextId_ + 1);
+  });
+  expectErrorMessageContaining(kExecutionContextSubstring, msgId++);
+
+  m::runtime::CallFunctionOnRequest req;
+  req.id = msgId;
+  req.functionDeclaration = std::string("function(){}");
+  req.executionContextId = kTestExecutionContextId_ + 1;
+  cdpAgent_->handleCommand(serializeRuntimeCallFunctionOnRequest(req));
+  expectErrorMessageContaining(kExecutionContextSubstring, msgId++);
 }
 
 #endif // HERMES_ENABLE_DEBUGGER

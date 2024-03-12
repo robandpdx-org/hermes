@@ -63,9 +63,13 @@ class CDPAgentImpl {
   /// Process a CDP command encoded in \p json.
   void handleCommand(std::string json);
 
-  /// Enable the Runtime domain without processing a CDP command or send a CDP
-  /// response.
+  /// Enable the Runtime domain without processing a CDP command or sending a
+  /// CDP response.
   void enableRuntimeDomain();
+
+  /// Enable the Debugger domain without processing a CDP command or sending a
+  /// CDP response.
+  void enableDebuggerDomain();
 
   /// Extract state to be persisted across reloads.
   State getState();
@@ -92,9 +96,13 @@ class CDPAgentImpl {
     /// handler.
     void handleCommand(std::shared_ptr<message::Request> command);
 
-    /// Enable the Runtime domain without processing a CDP command or send a CDP
-    /// response.
+    /// Enable the Runtime domain without processing a CDP command or sending a
+    /// CDP response.
     void enableRuntimeDomain();
+
+    /// Enable the Debugger domain without processing a CDP command or sending a
+    /// CDP response.
+    void enableDebuggerDomain();
 
     /// Get the Debugger domain state to be persisted.
     std::unique_ptr<DebuggerDomainState> getDebuggerDomainState();
@@ -198,9 +206,10 @@ void CDPAgentImpl::initializeDomainAgents(State state) {
 void CDPAgentImpl::handleCommand(std::string json) {
   std::shared_ptr<message::Request> command = message::Request::fromJson(json);
   if (!command) {
-    // Can't even parse the command to get the command ID, so there's no ID
-    // to respond to with an error message.
-    // TODO: return an error message
+    m::ErrorResponse resp;
+    resp.code = static_cast<int>(message::ErrorCode::ParseError);
+    resp.message = "Malformed JSON";
+    messageCallback_(resp.toJsonStr());
     return;
   }
 
@@ -216,6 +225,13 @@ void CDPAgentImpl::enableRuntimeDomain() {
   runtimeTaskRunner_.enqueueTask(
       [domainAgents = domainAgents_](HermesRuntime &) {
         domainAgents->enableRuntimeDomain();
+      });
+}
+
+void CDPAgentImpl::enableDebuggerDomain() {
+  runtimeTaskRunner_.enqueueTask(
+      [domainAgents = domainAgents_](HermesRuntime &) {
+        domainAgents->enableDebuggerDomain();
       });
 }
 
@@ -258,6 +274,7 @@ void CDPAgentImpl::DomainAgents::initialize(State state) {
   runtimeAgent_ = std::make_unique<RuntimeDomainAgent>(
       executionContextID_,
       runtime_,
+      asyncDebuggerAPI_,
       messageCallback_,
       objTable_,
       consoleMessageStorage_,
@@ -364,6 +381,11 @@ void CDPAgentImpl::DomainAgents::enableRuntimeDomain() {
   runtimeAgent_->enable();
 }
 
+void CDPAgentImpl::DomainAgents::enableDebuggerDomain() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  debuggerAgent_->enable();
+}
+
 std::unique_ptr<DebuggerDomainState>
 CDPAgentImpl::DomainAgents::getDebuggerDomainState() {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -409,6 +431,10 @@ void CDPAgent::handleCommand(std::string json) {
 
 void CDPAgent::enableRuntimeDomain() {
   impl_->enableRuntimeDomain();
+}
+
+void CDPAgent::enableDebuggerDomain() {
+  impl_->enableDebuggerDomain();
 }
 
 State CDPAgent::getState() {

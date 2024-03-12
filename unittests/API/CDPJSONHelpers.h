@@ -118,8 +118,10 @@ struct PropInfo {
   std::optional<std::string> unserializableValue;
 };
 
-void ensureErrorResponse(const std::string &message, int id);
-void ensureOkResponse(const std::string &message, int id);
+/// Ensure that \p message is a an error response with the given \p id,
+/// and return the error description.
+std::string ensureErrorResponse(const std::string &message, long long id);
+void ensureOkResponse(const std::string &message, long long id);
 
 void ensureNotification(const std::string &message, const std::string &method);
 
@@ -130,10 +132,18 @@ m::debugger::PausedNotification ensurePaused(
 
 void ensureEvalResponse(
     const std::string &message,
-    int id,
+    long long id,
     const char *expectedValue);
-void ensureEvalResponse(const std::string &message, int id, bool expectedValue);
-void ensureEvalResponse(const std::string &message, int id, int expectedValue);
+void ensureEvalResponse(
+    const std::string &message,
+    long long id,
+    bool expectedValue);
+void ensureEvalResponse(
+    const std::string &message,
+    long long id,
+    int expectedValue);
+
+std::string ensureObjectEvalResponse(const std::string &message, int id);
 
 void ensureEvalException(
     const std::string &message,

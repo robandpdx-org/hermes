@@ -105,13 +105,11 @@ std::unique_ptr<DebuggerDomainState> DebuggerDomainAgent::getState() {
   return state;
 }
 
-void DebuggerDomainAgent::enable(const m::debugger::EnableRequest &req) {
+void DebuggerDomainAgent::enable() {
   if (enabled_) {
-    sendResponseToClient(m::makeOkResponse(req.id));
     return;
   }
   enabled_ = true;
-  sendResponseToClient(m::makeOkResponse(req.id));
 
   // The debugger just got enabled; inform the client about all scripts.
   for (auto &srcLoc : runtime_.getDebugger().getLoadedScripts()) {
@@ -163,6 +161,12 @@ void DebuggerDomainAgent::enable(const m::debugger::EnableRequest &req) {
     paused_ = true;
     sendPausedNotificationToClient();
   }
+}
+
+void DebuggerDomainAgent::enable(const m::debugger::EnableRequest &req) {
+  // Match V8 behavior of returning success even if domain is already enabled
+  enable();
+  sendResponseToClient(m::makeOkResponse(req.id));
 }
 
 void DebuggerDomainAgent::disable(const m::debugger::DisableRequest &req) {
